@@ -70,7 +70,9 @@ namespace Windows_Local_host_Process
            StringBuilder sb = new StringBuilder(1024);
             //StringBuilder sb = new StringBuilder(1024);
             //GetClassName(hwnd, sb, sb.Capacity);
-
+            uint WM_GETTEXT = 0x000D;
+           SendMessage3(hwnd, WM_GETTEXT, 1024, sb);
+           Console.WriteLine(sb.ToString());
            List<IntPtr> list = GetAllChildrenWindowHandles(hwnd, 100);
            for (int i = 0; i < list.Count; ++i)
            {
@@ -99,13 +101,11 @@ namespace Windows_Local_host_Process
             return sb.ToString();
         }
 
-        [DllImport("user32.dll", EntryPoint = "SendMessage",
-  CharSet = CharSet.Auto)]
+        [DllImport("user32.dll", EntryPoint = "SendMessage",  CharSet = CharSet.Auto)]
         static extern int SendMessage3(IntPtr hwndControl, uint Msg,
           int wParam, StringBuilder strBuffer); // get text
 
-        [DllImport("user32.dll", EntryPoint = "SendMessage",
-          CharSet = CharSet.Auto)]
+        [DllImport("user32.dll", EntryPoint = "SendMessage",  CharSet = CharSet.Auto)]
         static extern int SendMessage4(IntPtr hwndControl, uint Msg,
           int wParam, int lParam);  // text length
         [DllImport("user32.dll", EntryPoint = "FindWindowEx",
